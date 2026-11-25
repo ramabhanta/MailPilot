@@ -328,6 +328,7 @@ export default function App() {
 
             <div className="lg:col-span-7">
               <ExecutionPanel
+                userEmail={session.user.email}
                 activeRun={activeRun}
                 draftRecipient={draftRecipient}
                 setDraftRecipient={setDraftRecipient}

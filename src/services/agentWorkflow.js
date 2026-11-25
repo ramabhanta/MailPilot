@@ -888,6 +888,15 @@ Return strictly valid JSON with this exact schema:
   }
 }
 
+function appendOnBehalfFooter(body, userEmail) {
+  const clean = (body || '').trim()
+  if (!userEmail) return clean
+  if (clean.toLowerCase().includes('on behalf of') && clean.includes(userEmail)) {
+    return clean
+  }
+  return `${clean}\n\n---\nSent via MailPilot on behalf of ${userEmail}. Replies to this email will go directly to ${userEmail}.`
+}
+
 export async function approveAndSendEmail({
   run,
   user,
@@ -896,10 +905,11 @@ export async function approveAndSendEmail({
   body,
 }) {
   const brevoApiKey = import.meta.env.VITE_BREVO_API_KEY
-  const brevoSenderEmail = import.meta.env.VITE_BREVO_SENDER_EMAIL
+  const brevoSenderEmail =
+    import.meta.env.VITE_BREVO_SENDER_EMAIL || 'ramabhanta6@gmail.com'
 
-  if (!brevoApiKey || !brevoSenderEmail) {
-    throw new Error('Missing VITE_BREVO_API_KEY or VITE_BREVO_SENDER_EMAIL in .env.')
+  if (!brevoApiKey) {
+    throw new Error('Missing VITE_BREVO_API_KEY in .env.')
   }
 
   const cleanRecipient = recipientEmail.trim()
@@ -911,8 +921,18 @@ export async function approveAndSendEmail({
     throw new Error('Subject and email body cannot be empty.')
   }
 
+  const loggedInEmail = (user?.email || run.sender_email || brevoSenderEmail).trim()
+  const metaName = (
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    ''
+  ).trim()
+  const senderDisplayName = metaName
+    ? `${metaName} (${loggedInEmail})`
+    : loggedInEmail
   const senderName = run.sender_name || deriveSenderName(user)
-  const senderEmail = run.sender_email || user.email
+  const senderEmail = loggedInEmail
+  const textContentWithFooter = appendOnBehalfFooter(cleanBody, loggedInEmail)
 
   const updatedPlan = (run.plan || []).map((stepObj) => {
     if (stepObj.step === 4) return { ...stepObj, status: 'done' }
@@ -957,11 +977,12 @@ export async function approveAndSendEmail({
       },
       body: JSON.stringify({
         sender: {
-          name: `${senderName} via MailPilot`,
+          name: senderDisplayName,
           email: brevoSenderEmail,
         },
         replyTo: {
-          email: senderEmail,
+          email: loggedInEmail,
+          name: loggedInEmail,
         },
         to: [
           {
@@ -969,7 +990,7 @@ export async function approveAndSendEmail({
           },
         ],
         subject: cleanSubject,
-        textContent: cleanBody,
+        textContent: textContentWithFooter,
       }),
     })
 
@@ -996,8 +1017,8 @@ export async function approveAndSendEmail({
         durationMs: brevoDuration,
         timestamp: new Date().toISOString(),
         inputs: {
-          sender: `${senderName} via MailPilot <${brevoSenderEmail}>`,
-          replyTo: senderEmail,
+          sender: `${senderDisplayName} <${brevoSenderEmail}>`,
+          replyTo: `${loggedInEmail} <${loggedInEmail}>`,
           to: cleanRecipient,
           subject: cleanSubject,
         },
@@ -1015,7 +1036,7 @@ export async function approveAndSendEmail({
           sender_email: senderEmail,
           recipient_email: cleanRecipient,
           subject: cleanSubject,
-          body: cleanBody,
+          body: textContentWithFooter,
           status: 'failed',
           provider_message_id: null,
           risk_level: riskResult.riskLevel,
@@ -1051,8 +1072,8 @@ export async function approveAndSendEmail({
     durationMs: brevoDuration,
     timestamp: new Date().toISOString(),
     inputs: {
-      sender: `${senderName} via MailPilot <${brevoSenderEmail}>`,
-      replyTo: senderEmail,
+      sender: `${senderDisplayName} <${brevoSenderEmail}>`,
+      replyTo: `${loggedInEmail} <${loggedInEmail}>`,
       to: cleanRecipient,
       subject: cleanSubject,
     },
@@ -1077,7 +1098,7 @@ export async function approveAndSendEmail({
         sender_email: senderEmail,
         recipient_email: cleanRecipient,
         subject: cleanSubject,
-        body: cleanBody,
+        body: textContentWithFooter,
         status: 'sent',
         provider_message_id: messageId,
         risk_level: riskResult.riskLevel,

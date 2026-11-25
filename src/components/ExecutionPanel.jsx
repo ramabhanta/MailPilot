@@ -48,6 +48,7 @@ const RUN_STATUS_PILL = {
 }
 
 export default function ExecutionPanel({
+  userEmail,
   activeRun,
   draftRecipient,
   setDraftRecipient,
@@ -241,6 +242,19 @@ export default function ExecutionPanel({
                 className="w-full rounded-lg border border-slate-800 bg-slate-900/90 px-3 py-2.5 text-xs leading-relaxed text-slate-100 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-75 resize-y"
               />
             </div>
+
+            {userEmail && (
+              <div className="rounded-lg border border-slate-800/80 bg-slate-900/60 px-3 py-2 text-[11px] text-slate-400 space-y-0.5">
+                <div>
+                  <span className="text-slate-300 font-medium">Reply-To:</span>{' '}
+                  <span className="font-mono text-indigo-300">{userEmail}</span>
+                </div>
+                <div className="opacity-85">
+                  Footer added on send: &ldquo;Sent via MailPilot on behalf of{' '}
+                  {userEmail}. Replies to this email will go directly to {userEmail}.&rdquo;
+                </div>
+              </div>
+            )}
           </div>
 
           {isAwaitingApproval && (

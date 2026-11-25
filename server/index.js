@@ -27,8 +27,19 @@ function getBrevoConfig() {
   return {
     apiKey: process.env.BREVO_API_KEY || process.env.VITE_BREVO_API_KEY || '',
     senderEmail:
-      process.env.BREVO_SENDER_EMAIL || process.env.VITE_BREVO_SENDER_EMAIL || '',
+      process.env.BREVO_SENDER_EMAIL ||
+      process.env.VITE_BREVO_SENDER_EMAIL ||
+      'ramabhanta6@gmail.com',
   }
+}
+
+function appendOnBehalfFooter(body, userEmail) {
+  const clean = (body || '').trim()
+  if (!userEmail) return clean
+  if (clean.toLowerCase().includes('on behalf of') && clean.includes(userEmail)) {
+    return clean
+  }
+  return `${clean}\n\n---\nSent via MailPilot on behalf of ${userEmail}. Replies to this email will go directly to ${userEmail}.`
 }
 
 function sleep(ms) {
@@ -765,7 +776,12 @@ app.post('/api/send', async (req, res) => {
     })
   }
 
-  const replyTo = (replyToEmail || senderEmail || brevo.senderEmail).trim()
+  const loggedInEmail = (replyToEmail || senderEmail || brevo.senderEmail).trim()
+  const senderDisplayName =
+    senderName && senderName.trim() && senderName.trim() !== 'MailPilot User' && senderName.trim() !== loggedInEmail
+      ? `${senderName.trim()} (${loggedInEmail})`
+      : loggedInEmail
+  const textContentWithFooter = appendOnBehalfFooter(cleanBody, loggedInEmail)
   const startMs = Date.now()
 
   try {
@@ -778,15 +794,16 @@ app.post('/api/send', async (req, res) => {
       },
       body: JSON.stringify({
         sender: {
-          name: `${cleanSenderName} via MailPilot`,
+          name: senderDisplayName,
           email: brevo.senderEmail,
         },
         replyTo: {
-          email: replyTo,
+          email: loggedInEmail,
+          name: loggedInEmail,
         },
         to: [{ email: cleanRecipient }],
         subject: cleanSubject,
-        textContent: cleanBody,
+        textContent: textContentWithFooter,
       }),
     })
 
