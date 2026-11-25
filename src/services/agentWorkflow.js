@@ -151,35 +151,166 @@ function deriveRecipientCompany(recipientEmail) {
   return org.charAt(0).toUpperCase() + org.slice(1)
 }
 
-function cleanGoalActionPhrase(goal) {
-  return goal
-    .replace(/\s+/g, ' ')
-    .trim()
+function normalizeAndCorrectGoal(rawGoal) {
+  let text = (rawGoal || '').replace(/\s+/g, ' ').trim()
+
+  // Strip leading prompt-style meta instructions
+  text = text
     .replace(
-      /^(please\s+)?(can you\s+|could you\s+)?(write|draft|compose|send|create|generate)\s+(an?\s+)?(short\s+|quick\s+|brief\s+|formal\s+|friendly\s+)?(email|message|note|outreach)\s+(to\s+[^,.]+\s+)?(about|regarding|to|for|asking|inviting|introducing|following up on)?\s*/i,
+      /^(please\s+)?(can you\s+|could you\s+)?(write|draft|compose|send|create|generate)\s+(an?\s+)?(short\s+|quick\s+|brief\s+|formal\s+|semi-?formal\s+|friendly\s+)?(email|mail|message|note|letter|application|outreach)\s+(to\s+(?:my\s+)?[a-z]+(?:\s+[a-z]+)?\s+)?(about|regarding|for|asking|inviting|introducing|requesting|following up on)?\s*/i,
       ''
     )
     .trim()
+
+  // Common typos, SMS shorthand, and grammar cleanups
+  const typoReplacements = [
+    [/\b(marrage|marraige|marrige|mariage|marige)\b/gi, 'marriage'],
+    [/\b(weding|weddng|weeding)\b/gi, 'wedding'],
+    [/\b(leav|leavs|leeve)\b/gi, 'leave'],
+    [/\b(tommorow|tomorow|tommorw|tmrw|tmw|2moro)\b/gi, 'tomorrow'],
+    [/\b(yestarday|yestrday)\b/gi, 'yesterday'],
+    [/\b(plz|pls|plzz)\b/gi, 'please'],
+    [/\b(bday|b'day)\b/gi, 'birthday'],
+    [/\b(bcz|bcuz|coz|becuase|becoz)\b/gi, 'because'],
+    [/\b(abt|abaut)\b/gi, 'about'],
+    [/\b(msg|mssg)\b/gi, 'message'],
+    [/\b(wrk)\b/gi, 'work'],
+    [/\b(recieve|receve)\b/gi, 'receive'],
+    [/\b(seperate)\b/gi, 'separate'],
+    [/\b(occassion|ocasion)\b/gi, 'occasion'],
+    [/\b(vacaton|vaction)\b/gi, 'vacation'],
+    [/\b(clg|colg)\b/gi, 'college'],
+    [/\b(univ)\b/gi, 'university'],
+    [/\b(prof)\b/gi, 'professor'],
+    [/\b(mgr)\b/gi, 'manager'],
+    [/\b(bro)\b/gi, 'brother'],
+    [/\b(sis)\b/gi, 'sister'],
+    [/\b(famlily|famly|familly)\b/gi, 'family'],
+    [/\b(functn|funtion)\b/gi, 'function'],
+    [/\b(emergncy|emrgency)\b/gi, 'emergency'],
+    [/\b(fevr)\b/gi, 'fever'],
+    [/\b(hospitl|hosptal)\b/gi, 'hospital'],
+    [/\b(meetng|meting)\b/gi, 'meeting'],
+    [/\b(discus)\b/gi, 'discuss'],
+    [/\b(appoinment|apointment)\b/gi, 'appointment'],
+    [/\b(sry|srry)\b/gi, 'sorry'],
+    [/\b(thx|thnx|tq|tnx)\b/gi, 'thank you'],
+    [/\bu\b/gi, 'you'],
+    [/\bur\b/gi, 'your'],
+    [/\bi\b/g, 'I'],
+    [/\bim\b/gi, "I'm"],
+    [/\bi'm\b/gi, "I'm"],
+    [/\bive\b/gi, "I've"],
+    [/\bdont\b/gi, "don't"],
+    [/\bcant\b/gi, "can't"],
+    [/\bwont\b/gi, "won't"],
+    [/\b(brother)\s+(marriage|wedding)\b/gi, "brother's wedding"],
+    [/\b(sister)\s+(marriage|wedding)\b/gi, "sister's wedding"],
+    [/\b(cousin)\s+(marriage|wedding)\b/gi, "cousin's wedding"],
+    [/\b(friend)\s+(marriage|wedding)\b/gi, "friend's wedding"],
+  ]
+
+  for (const [pattern, replacement] of typoReplacements) {
+    text = text.replace(pattern, replacement)
+  }
+
+  // Collapse duplicated consecutive words (e.g. "about about" -> "about")
+  text = text.replace(/\b(\w+)\s+\1\b/gi, '$1')
+  return text.replace(/\s+/g, ' ').trim()
 }
 
 function detectOutreachIntent(goal) {
   const text = goal.toLowerCase()
+  if (
+    /\b(leave|day off|days off|time off|pto|absent|absence|vacation|sick|fever|unwell|illness|hospital|medical|maternity|paternity|bereavement|half[\s-]?day|off work)\b/.test(
+      text
+    ) ||
+    (/\b(marriage|wedding|ceremony|family function)\b/.test(text) &&
+      /\b(want|need|take|taking|off|leave|days?|permission)\b/.test(text))
+  ) {
+    return 'leave'
+  }
   if (/\b(thank|appreciate|grateful|gratitude)\b/.test(text)) return 'thankyou'
   if (/\b(follow[\s-]?up|checking in|circle back|touch base|reminder)\b/.test(text))
     return 'followup'
-  if (/\b(apply|application|job|role|position|resume|cv|interview|internship|referral)\b/.test(text))
+  if (
+    /\b(apply|application|job|role|position|resume|cv|interview|internship|referral)\b/.test(
+      text
+    )
+  ) {
     return 'application'
-  if (/\b(invite|invitation|webinar|event|workshop|meetup|conference|lunch|coffee)\b/.test(text))
+  }
+  if (
+    /\b(invite|invitation|party|celebration|webinar|event|workshop|meetup|conference|dinner|lunch|coffee)\b/.test(
+      text
+    )
+  ) {
     return 'invitation'
+  }
   if (/\b(partner|partnership|collaborat|joint|integrate|co-market)\b/.test(text))
     return 'partnership'
-  if (/\b(demo|meeting|call|schedule|calendar|slot|15-min|30-min|chat|sync|catch up)\b/.test(text))
+  if (
+    /\b(demo|meeting|call|schedule|calendar|slot|15-min|30-min|chat|sync|catch up|appointment)\b/.test(
+      text
+    )
+  ) {
     return 'meeting'
-  if (/\b(introduc|pitch|product|platform|solution|offer|service|proposal|pricing|trial)\b/.test(text))
+  }
+  if (
+    /\b(introduc|pitch|product|platform|solution|offer|service|proposal|pricing|trial)\b/.test(
+      text
+    )
+  ) {
     return 'sales'
+  }
   if (/\b(update|status|progress|report|launch|release|announcement)\b/.test(text))
     return 'update'
   return 'general'
+}
+
+function extractLeaveDetails(cleanedGoal) {
+  const durationMatch = cleanedGoal.match(
+    /\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|a couple of|a few)\s+(days?|weeks?|months?)\b/i
+  )
+  const halfDayMatch = /\bhalf[\s-]?day\b/i.test(cleanedGoal)
+  const duration = durationMatch
+    ? `${durationMatch[1].toLowerCase()} ${durationMatch[2].toLowerCase()}`
+    : halfDayMatch
+    ? 'half a day'
+    : ''
+
+  const dateMatch = cleanedGoal.match(
+    /\b(from\s+[a-z0-9,\s]+?(?:\s+to\s+[a-z0-9,\s]+)?|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|[a-z]+\s+\d{1,2})|starting\s+(?:tomorrow|monday|tuesday|wednesday|thursday|friday|next week)|tomorrow|next week|this week)\b/i
+  )
+  const datePhrase = dateMatch ? dateMatch[0].trim() : ''
+
+  let reason = ''
+  if (/brother'?s\s+(wedding|marriage)/i.test(cleanedGoal)) {
+    reason = "my brother's wedding"
+  } else if (/sister'?s\s+(wedding|marriage)/i.test(cleanedGoal)) {
+    reason = "my sister's wedding"
+  } else if (/cousin'?s\s+(wedding|marriage)/i.test(cleanedGoal)) {
+    reason = "my cousin's wedding"
+  } else if (/friend'?s\s+(wedding|marriage)/i.test(cleanedGoal)) {
+    reason = "a close friend's wedding"
+  } else if (/\b(wedding|marriage)\b/i.test(cleanedGoal)) {
+    reason = 'a family wedding'
+  } else if (/\b(sick|fever|unwell|ill|flu|cold|hospital|medical|doctor)\b/i.test(cleanedGoal)) {
+    reason = 'medical'
+  } else if (/\b(family emergency|emergency)\b/i.test(cleanedGoal)) {
+    reason = 'an urgent family matter'
+  } else if (/\b(family function|family event)\b/i.test(cleanedGoal)) {
+    reason = 'a family event'
+  } else if (/\bvacation\b/i.test(cleanedGoal)) {
+    reason = 'a planned vacation'
+  } else {
+    const forMatch = cleanedGoal.match(/\b(?:for|due to|because of)\s+([^,.!?]+)/i)
+    if (forMatch && !/\bleave\b/i.test(forMatch[1])) {
+      reason = forMatch[1].trim()
+    }
+  }
+
+  return { duration, datePhrase, reason }
 }
 
 function capitalizeSentence(text) {
@@ -204,156 +335,275 @@ function buildFallbackDraftPlan({
 }) {
   const greetingName = deriveRecipientGreeting(recipientEmail)
   const company = deriveRecipientCompany(recipientEmail)
-  const rawGoal = goal.replace(/\s+/g, ' ').trim()
-  const cleanedAction = cleanGoalActionPhrase(rawGoal) || rawGoal
-  const intent = detectOutreachIntent(rawGoal)
+  const cleanedAction = normalizeAndCorrectGoal(goal) || (goal || '').trim()
+  const intent = detectOutreachIntent(cleanedAction)
 
   const topicBase = cleanedAction.replace(/[.!?]+$/, '')
   const conciseTopic =
-    topicBase.length > 62
-      ? `${topicBase.slice(0, 59).replace(/[,:;.\s]+$/, '')}...`
+    topicBase.length > 60
+      ? `${topicBase.slice(0, 57).replace(/[,:;.\s]+$/, '')}...`
       : topicBase
   const topicTitle = capitalizeSentence(conciseTopic)
 
-  const actionClause = ensurePeriod(
-    cleanedAction.charAt(0).toLowerCase() + cleanedAction.slice(1)
-  )
+  const actionClause =
+    cleanedAction.charAt(0).toLowerCase() + cleanedAction.slice(1).replace(/[.!?]+$/, '')
   const actionSentence = ensurePeriod(capitalizeSentence(cleanedAction))
   const companyRef = company ? ` at ${company}` : ''
 
-  const openingByTone = {
-    Formal: `Dear ${greetingName},\n\nI hope this message finds you well.`,
-    'Semi-Formal': `Hi ${greetingName},\n\nI hope you're doing well.`,
-    Friendly: `Hi ${greetingName},\n\nHope your week is going great!`,
-  }
+  const greeting =
+    tone === 'Formal'
+      ? `Dear ${greetingName},`
+      : tone === 'Friendly'
+      ? `Hey ${greetingName}!`
+      : `Hi ${greetingName},`
 
-  const signoffByTone = {
-    Formal: `Sincerely,\n${senderName}\n${senderEmail}`,
-    'Semi-Formal': `Best regards,\n${senderName}\n${senderEmail}`,
-    Friendly: `Best,\n${senderName}\n${senderEmail}`,
-  }
+  const signoff =
+    tone === 'Formal'
+      ? `Sincerely,\n${senderName}\n${senderEmail}`
+      : tone === 'Friendly'
+      ? `Warmly,\n${senderName}\n${senderEmail}`
+      : `Best regards,\n${senderName}\n${senderEmail}`
 
-  let subjectPrefix = {
-    Formal: 'Regarding:',
-    'Semi-Formal': 'Connecting on:',
-    Friendly: 'Quick note:',
-  }[tone] || 'Connecting on:'
-
-  let bodyCore = ''
-  let cta = ''
+  let subject = ''
+  let paragraphs = []
 
   switch (intent) {
-    case 'meeting':
-      subjectPrefix = tone === 'Formal' ? 'Meeting Request:' : tone === 'Friendly' ? 'Quick chat:' : 'Scheduling:'
-      bodyCore =
-        tone === 'Formal'
-          ? `I am writing to arrange a brief conversation regarding ${actionClause} Given your work${companyRef}, I believe a focused discussion would be mutually valuable.`
-          : tone === 'Friendly'
-          ? `I'd love to set up a quick conversation about ${actionClause} It would be great to hear your thoughts${companyRef ? ` on what you're building at ${company}` : ''} and walk through a few ideas together.`
-          : `I'm reaching out to coordinate a brief call regarding ${actionClause} I'd value the chance to connect${companyRef} and share a concise overview.`
-      cta =
-        tone === 'Formal'
-          ? 'Could you please share a few times that work well with your schedule this week?'
-          : tone === 'Friendly'
-          ? 'Let me know a day or time that works best for you!'
-          : 'Would you be open to a quick 15-minute call later this week?'
+    case 'leave': {
+      const { duration, datePhrase, reason } = extractLeaveDetails(cleanedAction)
+      const dateSuffix = datePhrase ? ` (${datePhrase})` : ''
+      const dateInline = datePhrase ? ` ${datePhrase}` : ''
+
+      if (tone === 'Formal') {
+        const formalReason =
+          reason === 'medical'
+            ? 'for medical reasons and recovery'
+            : reason
+            ? `to attend ${reason}`
+            : 'due to personal commitments'
+        subject = `Leave Application${duration ? ` – ${capitalizeSentence(duration)}` : ''}${reason && reason !== 'medical' ? ` (${capitalizeSentence(reason)})` : ''}`
+        paragraphs = [
+          `I am writing to formally request ${duration ? `${duration} of leave` : 'a leave of absence'}${dateInline} ${formalReason}.`,
+          'I will ensure that all ongoing tasks and pending responsibilities are completed or handed over cleanly prior to my absence, and I will remain reachable in case of any urgent matters.',
+          'Thank you for your time and consideration. I kindly await your approval.',
+        ]
+      } else if (tone === 'Friendly') {
+        const friendlyReason =
+          reason === 'medical'
+            ? "because I'm feeling under the weather"
+            : reason
+            ? `for ${reason}`
+            : 'for a quick personal break'
+        subject = `Taking ${duration || 'a few days'} off${reason && reason !== 'medical' ? ` – ${capitalizeSentence(reason)}` : ''}!`
+        paragraphs = [
+          `Hope you're having an awesome week! Just wanted to drop a quick note to let you know I'm hoping to take ${duration || 'a few days'} off${dateInline} ${friendlyReason}.`,
+          "I'll make sure everything on my plate is wrapped up or covered before I head out so nothing slows down, and I'll jump right back in once I'm back.",
+          'Let me know if that works on your end!',
+        ]
+      } else {
+        const semiReason =
+          reason === 'medical'
+            ? 'due to health reasons'
+            : reason
+            ? `to attend ${reason}`
+            : 'for personal reasons'
+        subject = `Leave Request: ${duration ? `${duration} off` : 'Time off'}${dateSuffix}`
+        paragraphs = [
+          `I hope you're doing well. I wanted to reach out and request ${duration ? `${duration} of leave` : 'some time off'}${dateInline} ${semiReason}.`,
+          "I'll make sure my current responsibilities are caught up and smoothly covered before I step away. Please let me know if this works for you.",
+        ]
+      }
       break
-    case 'followup':
-      subjectPrefix = tone === 'Formal' ? 'Follow-Up:' : 'Following up:'
-      bodyCore =
-        tone === 'Formal'
-          ? `I am following up regarding ${actionClause} I wanted to ensure you had everything needed on your end and see if any additional context would be helpful.`
-          : `Just circling back on ${actionClause} Wanted to check in and see if you had any questions or thoughts since we last connected.`
-      cta =
-        tone === 'Formal'
-          ? 'Please let me know how you would like to proceed at your convenience.'
-          : 'Happy to jump on a quick call or continue over email—whichever is easier for you.'
+    }
+
+    case 'meeting': {
+      if (tone === 'Formal') {
+        subject = `Meeting Request: ${topicTitle}`
+        paragraphs = [
+          `I hope this message finds you well. I am writing to formally request a brief meeting regarding ${actionClause}.`,
+          `Given your perspective${companyRef}, I believe a focused discussion would be highly productive. Could you please share a few times that suit your schedule this week?`,
+          'Thank you for your time and consideration.',
+        ]
+      } else if (tone === 'Friendly') {
+        subject = `Quick chat: ${topicTitle}`
+        paragraphs = [
+          `Hope your week is going great! I wanted to see if we could hop on a quick call about ${actionClause}.`,
+          'Let me know what day or time works best for you — looking forward to catching up!',
+        ]
+      } else {
+        subject = `Scheduling: ${topicTitle}`
+        paragraphs = [
+          `I hope you're doing well. I wanted to reach out about scheduling a brief conversation regarding ${actionClause}.`,
+          'Please let me know if you have a 15-minute window that works for you this week.',
+        ]
+      }
       break
+    }
+
+    case 'followup': {
+      if (tone === 'Formal') {
+        subject = `Follow-Up: ${topicTitle}`
+        paragraphs = [
+          `I hope this message finds you well. I am writing to follow up regarding ${actionClause}.`,
+          'Please let me know if you require any additional information from my end. Thank you for your time and consideration.',
+        ]
+      } else if (tone === 'Friendly') {
+        subject = `Checking in: ${topicTitle}`
+        paragraphs = [
+          `Hope you're having a great week! Just wanted to quickly circle back on ${actionClause}.`,
+          'No rush at all — let me know your thoughts whenever you get a chance!',
+        ]
+      } else {
+        subject = `Following up: ${topicTitle}`
+        paragraphs = [
+          `I hope you're doing well. I wanted to follow up briefly regarding ${actionClause}.`,
+          'Please let me know if you have any questions or if there is anything helpful I can share.',
+        ]
+      }
+      break
+    }
+
+    case 'application': {
+      if (tone === 'Formal') {
+        subject = `Application: ${topicTitle}`
+        paragraphs = [
+          `I am writing to formally express my interest regarding ${actionClause}.`,
+          `With my relevant background and commitment to excellence, I am confident in my ability to add immediate value to your team${companyRef}.`,
+          'Thank you for your time and consideration. I would welcome the opportunity to discuss my candidacy further.',
+        ]
+      } else if (tone === 'Friendly') {
+        subject = `Excited to connect: ${topicTitle}`
+        paragraphs = [
+          `Hope you're having an awesome week! I wanted to reach out about ${actionClause}.`,
+          `I'm really excited about what your team${companyRef} is doing and would love to chat more about how I can contribute. Let me know what you think!`,
+        ]
+      } else {
+        subject = `Regarding: ${topicTitle}`
+        paragraphs = [
+          `I hope you're doing well. I wanted to reach out regarding ${actionClause}.`,
+          `I'd appreciate the chance to share a bit more about my background${companyRef} and discuss how I might contribute. Please let me know if a brief call works for you.`,
+        ]
+      }
+      break
+    }
+
+    case 'invitation': {
+      if (tone === 'Formal') {
+        subject = `Formal Invitation: ${topicTitle}`
+        paragraphs = [
+          `I am pleased to extend a formal invitation regarding ${actionClause}.`,
+          `Your presence${companyRef} would be greatly valued. Kindly let me know if you will be able to attend at your earliest convenience.`,
+        ]
+      } else if (tone === 'Friendly') {
+        subject = `You're invited: ${topicTitle}!`
+        paragraphs = [
+          `Hope your week is going great! I wanted to personally invite you to ${actionClause}.`,
+          "It would be awesome to have you there — let me know if you can make it and I'll send over the details!",
+        ]
+      } else {
+        subject = `Invitation: ${topicTitle}`
+        paragraphs = [
+          `I hope you're doing well. I wanted to invite you regarding ${actionClause}.`,
+          'Please let me know if you are available to join, and I will gladly share all the details.',
+        ]
+      }
+      break
+    }
+
+    case 'thankyou': {
+      if (tone === 'Formal') {
+        subject = `Expression of Gratitude: ${topicTitle}`
+        paragraphs = [
+          `I am writing to extend my sincere gratitude regarding ${actionClause}.`,
+          'Your support and time are deeply appreciated. Please do not hesitate to reach out if I may ever be of assistance.',
+        ]
+      } else if (tone === 'Friendly') {
+        subject = `Big thank you — ${topicTitle}!`
+        paragraphs = [
+          `Hope you're having a wonderful week! Just wanted to send a warm thank-you note for ${actionClause}.`,
+          'I genuinely appreciate your help and kindness — talk soon!',
+        ]
+      } else {
+        subject = `Thank you: ${topicTitle}`
+        paragraphs = [
+          `I hope you're doing well. I wanted to send a quick note to thank you for ${actionClause}.`,
+          'I really appreciate your time and support. Best wishes ahead!',
+        ]
+      }
+      break
+    }
+
     case 'partnership':
-      subjectPrefix = tone === 'Formal' ? 'Partnership Inquiry:' : 'Collaboration:'
-      bodyCore =
-        tone === 'Formal'
-          ? `I am reaching out to explore a potential collaboration${companyRef} centered around ${actionClause} I see strong alignment between our teams and would welcome the opportunity to discuss how we might work together.`
-          : `I've been following your work${companyRef} and wanted to explore collaborating on ${actionClause} I think there's a great opportunity for us to create value together.`
-      cta =
-        tone === 'Formal'
-          ? 'Would you be available for a brief introductory call next week to explore this further?'
-          : 'Would you be open to a quick chat to bounce a few ideas around?'
+    case 'sales': {
+      if (tone === 'Formal') {
+        subject = `${intent === 'partnership' ? 'Partnership Proposal' : 'Introduction'}: ${topicTitle}`
+        paragraphs = [
+          `I hope this message finds you well. I am writing to formally introduce an opportunity${companyRef} regarding ${actionClause}.`,
+          'I believe our teams could achieve meaningful results together, and I would welcome a brief introductory discussion at your convenience.',
+          'Thank you for your time and consideration.',
+        ]
+      } else if (tone === 'Friendly') {
+        subject = `Quick idea: ${topicTitle}`
+        paragraphs = [
+          `Hope you're having an awesome week! Just wanted to drop a quick note about ${actionClause}.`,
+          `I think there's a really exciting fit${companyRef ? ` with what you're doing at ${company}` : ''} — let me know what you think about hopping on a quick chat!`,
+        ]
+      } else {
+        subject = `Connecting on: ${topicTitle}`
+        paragraphs = [
+          `I hope you're doing well. I wanted to reach out${companyRef} regarding ${actionClause}.`,
+          "I'd love to share a quick overview and hear your thoughts. Please let me know if a brief conversation works for you this week.",
+        ]
+      }
       break
-    case 'application':
-      subjectPrefix = tone === 'Formal' ? 'Application:' : 'Re:'
-      bodyCore =
-        tone === 'Formal'
-          ? `I am writing to express my strong interest regarding ${actionClause} With my background and hands-on experience, I am confident I can contribute meaningfully to your team${companyRef}.`
-          : `I'm reaching out regarding ${actionClause} I'm excited about what your team${companyRef} is building and would love to share how my experience aligns.`
-      cta =
-        tone === 'Formal'
-          ? 'Thank you for your time and consideration. I would welcome the opportunity to speak further.'
-          : 'Let me know if there is a convenient time for a brief introductory conversation.'
+    }
+
+    case 'update': {
+      if (tone === 'Formal') {
+        subject = `Status Update: ${topicTitle}`
+        paragraphs = [
+          `I am writing to provide a formal update regarding ${actionClause}.`,
+          'Please let me know if you require any further clarification or documentation. Thank you for your time and attention.',
+        ]
+      } else if (tone === 'Friendly') {
+        subject = `Quick update: ${topicTitle}`
+        paragraphs = [
+          `Hope your week is going well! Wanted to share a quick update on ${actionClause}.`,
+          'Let me know if you have any questions or want to chat through any of the details!',
+        ]
+      } else {
+        subject = `Update: ${topicTitle}`
+        paragraphs = [
+          `I hope you're doing well. I wanted to share a brief update regarding ${actionClause}.`,
+          'Please let me know if you have any questions or feedback.',
+        ]
+      }
       break
-    case 'invitation':
-      subjectPrefix = tone === 'Formal' ? 'Invitation:' : "You're invited:"
-      bodyCore =
-        tone === 'Formal'
-          ? `You are warmly invited regarding ${actionClause} Your perspective${companyRef} would add tremendous value to the conversation.`
-          : `I wanted to personally invite you to ${actionClause} We'd be thrilled to have you join us.`
-      cta =
-        tone === 'Formal'
-          ? 'Kindly let me know if you will be able to attend so we may reserve your place.'
-          : 'Let me know if you can make it and I will send over the details!'
-      break
-    case 'thankyou':
-      subjectPrefix = tone === 'Formal' ? 'Thank You:' : 'Thanks so much —'
-      bodyCore =
-        tone === 'Formal'
-          ? `Thank you sincerely regarding ${actionClause} Your time, support, and insights${companyRef} are deeply appreciated.`
-          : `Wanted to send a quick thank-you for ${actionClause} Really appreciate your time and help!`
-      cta =
-        tone === 'Formal'
-          ? 'Please do not hesitate to reach out if I can ever be of assistance.'
-          : 'Looking forward to staying in touch!'
-      break
-    case 'sales':
-      subjectPrefix = tone === 'Formal' ? 'Introduction:' : 'Quick idea:'
-      bodyCore =
-        tone === 'Formal'
-          ? `I am reaching out to introduce our work${companyRef ? ` to your team at ${company}` : ''} regarding ${actionClause} Our focus is helping teams streamline execution and achieve measurable results.`
-          : `I wanted to reach out${companyRef ? ` to the ${company} team` : ''} regarding ${actionClause} We help teams move faster without adding operational overhead, and I'd love to share a tailored walkthrough.`
-      cta =
-        tone === 'Formal'
-          ? 'Would you be available for a brief 15-minute introduction this week?'
-          : 'Open to a quick 15-minute look sometime this week?'
-      break
-    case 'update':
-      subjectPrefix = tone === 'Formal' ? 'Status Update:' : 'Update:'
-      bodyCore =
-        tone === 'Formal'
-          ? `I am writing to share an important update regarding ${actionClause} Everything is progressing on track, and I wanted to keep you informed of the latest milestones.`
-          : `Sharing a quick update on ${actionClause} Wanted to make sure you have the latest details and alignment on next steps.`
-      cta =
-        tone === 'Formal'
-          ? 'Please let me know if you have any questions or require further details.'
-          : 'Let me know if you have any questions or feedback!'
-      break
-    default:
-      bodyCore =
-        tone === 'Formal'
-          ? `I am writing to reach out regarding the following matter: ${actionSentence} I believe aligning on this${companyRef} would be very worthwhile.`
-          : tone === 'Friendly'
-          ? `I wanted to reach out about ${actionClause} I think it would be great to connect and explore how we can move this forward.`
-          : `I'm reaching out regarding ${actionClause} I'd appreciate the chance to connect and share a bit more context.`
-      cta =
-        tone === 'Formal'
-          ? 'Please let me know if there is a convenient time for a brief conversation this week.'
-          : tone === 'Friendly'
-          ? 'Let me know what works best for you!'
-          : 'Would you be open to a quick chat later this week?'
+    }
+
+    default: {
+      if (tone === 'Formal') {
+        subject = `Regarding: ${topicTitle}`
+        paragraphs = [
+          `I hope this message finds you well. I am writing to formally reach out regarding the following matter: ${actionSentence}`,
+          'Thank you for your time and consideration. Please let me know how you would like to proceed at your convenience.',
+        ]
+      } else if (tone === 'Friendly') {
+        subject = `Quick note: ${topicTitle}`
+        paragraphs = [
+          `Hope you're having an awesome week! Just wanted to drop a quick note: ${actionSentence}`,
+          'Let me know what you think!',
+        ]
+      } else {
+        subject = `Regarding: ${topicTitle}`
+        paragraphs = [
+          `I hope you're doing well. I wanted to reach out regarding the following: ${actionSentence}`,
+          'Please let me know if this works for you or if you have any questions.',
+        ]
+      }
+    }
   }
 
-  const subject = `${subjectPrefix} ${topicTitle}`
-  const opening = openingByTone[tone] || openingByTone['Semi-Formal']
-  const signoff = signoffByTone[tone] || signoffByTone['Semi-Formal']
-  const body = `${opening}\n\n${bodyCore}\n\n${cta}\n\n${signoff}`
+  const body = `${greeting}\n\n${paragraphs.join('\n\n')}\n\n${signoff}`
 
   return {
     plan: [
@@ -364,8 +614,8 @@ function buildFallbackDraftPlan({
       },
       {
         step: 2,
-        title: 'Synthesize Context-Aware Draft',
-        description: `Crafted a ${tone.toLowerCase()} ${intent} outreach draft tailored to "${conciseTopic}".`,
+        title: 'Normalize Grammar & Draft by Tone/Intent',
+        description: `Drafted a ${tone.toLowerCase()} ${intent} email tailored to "${conciseTopic}".`,
       },
       {
         step: 3,
@@ -633,12 +883,21 @@ export async function runPlanAndDraftAgent({
 Given the outreach parameters below, generate:
 1. A 5-step execution plan specific to this outreach task (steps 1 through 5).
    - Step 1 must cover recipient validation & ${riskResult.riskLevel} risk classification.
-   - Step 2 must cover goal analysis & tone calibration (${tone}).
+   - Step 2 must cover intent detection, grammar cleanup & tone calibration (${tone}).
    - Step 3 must cover drafting the personalized email & checkpointing state.
    - Step 4 must be the Human-in-the-Loop approval gate.
    - Step 5 must cover Brevo SMTP dispatch & Supabase audit logging.
-2. A compelling email subject line.
-3. A clear, ready-to-send email body in a "${tone}" tone, signed off by "${senderName}" (${senderEmail}). Do not include placeholder brackets like [Your Name] or [Company] unless genuinely missing; write a polished, natural email ready to send.
+2. A compelling, specific email subject line.
+3. A clear, ready-to-send email body strictly written in the requested "${tone}" tone, signed off by "${senderName}" (${senderEmail}).
+
+CRITICAL WRITING & TONE RULES:
+- Grammar & Spelling: ALWAYS fix typos, missing apostrophes, abbreviations, or broken grammar in the user's goal (e.g., "my brother marrage i want 3 days leave" -> "my brother's wedding" / "3 days of leave"). NEVER copy raw broken text verbatim.
+- Intent Fidelity: Write a real, context-aware email for the specific intent (e.g., Leave Application, Event Invitation, Meeting Request, Job Application, Follow-Up, etc.). Never use generic corporate filler like "explore how we can move this forward".
+- Strict Tone Differentiation:
+  * If Tone is "Formal": Executive, respectful, and structured. Salutation: "Dear ...," Opening: "I am writing to formally..." Zero contractions or casual slang. Closing: "Thank you for your time and consideration." + "Sincerely,".
+  * If Tone is "Semi-Formal": Polite, clear, approachable professional. Salutation: "Hi ...," Opening: "I hope you're doing well. I wanted to reach out regarding..." Closing: "Please let me know if this works for you." + "Best regards,".
+  * If Tone is "Friendly": Warm, personal, conversational, and enthusiastic. Salutation: "Hey ...!" Opening: "Hope you're having an awesome week! Just wanted to drop a quick note about..." Closing: "Let me know what you think!" + "Warmly," or "Cheers,".
+- Do not include placeholder brackets like [Your Name] or [Company].
 
 Outreach Context:
 - Sender Name: ${senderName}
@@ -646,7 +905,7 @@ Outreach Context:
 - Recipient Email: ${cleanRecipient}
 - Risk Level: ${riskResult.riskLevel}
 - Tone: ${tone}
-- Goal / Purpose: ${cleanGoal}
+- Raw Goal / Purpose: ${cleanGoal}
 
 Return strictly valid JSON with this exact schema:
 {
