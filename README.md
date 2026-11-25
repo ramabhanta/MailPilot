@@ -23,9 +23,33 @@ MailPilot is a Human-in-the-Loop (HITL) AI Email Outreach Agent built with **Rea
 
 1. Ensure your `.env` file is populated at the project root.
 2. Run `supabase/schema.sql` in your Supabase SQL Editor to create the `agent_runs` and `email_logs` tables along with Row Level Security (RLS) policies.
-3. Install dependencies and start the dev server:
+3. Install dependencies and start the frontend dev server:
 
 ```bash
 npm install
 npm run dev
 ```
+
+## Lightweight Backend (`server/`) & Render Deployment
+
+MailPilot includes a standalone Express + CORS Node.js backend in `server/index.js`:
+
+- `GET /health` — Health & configuration check
+- `POST /api/draft` — Validates recipient, classifies risk, generates a 5-step plan + email draft via Gemini (with automatic fallback draft engine on persistent HTTP 503)
+- `POST /api/send` — Dispatches approved emails via Brevo SMTP REST API
+
+Run locally:
+
+```bash
+cd server
+npm install
+npm start
+```
+
+Or from the project root:
+
+```bash
+npm run start:server
+```
+
+Deploy to Render using the included `render.yaml` Blueprint (`rootDir: server`, `healthCheckPath: /health`). Set `GEMINI_API_KEY`, `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, and `CORS_ORIGIN` in Render's environment settings.
