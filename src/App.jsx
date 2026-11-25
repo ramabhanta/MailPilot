@@ -180,6 +180,17 @@ export default function App() {
         message: confirmationMsg,
       })
     } catch (err) {
+      if (err.updatedTrace || err.updatedDraftPayload) {
+        setActiveRun((prev) =>
+          prev
+            ? {
+                ...prev,
+                trace: err.updatedTrace || prev.trace,
+                draft_payload: err.updatedDraftPayload || prev.draft_payload,
+              }
+            : prev
+        )
+      }
       setBanner({
         type: 'error',
         message: err.message || 'Failed to send email via Brevo.',
