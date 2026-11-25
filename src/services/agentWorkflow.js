@@ -91,12 +91,7 @@ function safeParseGeminiJson(rawText) {
   }
 }
 
-const GEMINI_MODELS = [
-  'gemini-flash-latest',
-  'gemini-flash-lite-latest',
-  'gemini-3.8-flash',
-  'gemini-3.8-pro',
-]
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash']
 const GEMINI_REQUEST_TIMEOUT_MS = 60000
 const GEMINI_503_RETRY_DELAY_MS = 1500
 
@@ -178,8 +173,8 @@ function buildFallbackDraftPlan({
       },
       {
         step: 2,
-        title: 'Synthesize Strategy & Draft (Fallback Draft Engine)',
-        description: `Generated ${tone.toLowerCase()} outreach draft using Fallback Draft Engine (Gemini 503) after all Gemini models experienced high demand.`,
+        title: 'Synthesize Strategy & Draft (Smart Fallback Engine)',
+        description: `Generated ${tone.toLowerCase()} outreach draft using MailPilot's Smart Fallback Draft Engine.`,
       },
       {
         step: 3,
@@ -244,29 +239,13 @@ function formatGeminiError(attemptErrors) {
   return `Gemini API failed across models — ${attemptErrors.join(' | ')}`
 }
 
-async function fetchGeminiGenerateContent({
-  endpoint,
-  systemPrompt,
-  includeThinkingBudget = true,
-}) {
+async function fetchGeminiGenerateContent({ endpoint, systemPrompt }) {
   const controller = new AbortController()
   let timedOut = false
   const timeoutId = setTimeout(() => {
     timedOut = true
     controller.abort()
   }, GEMINI_REQUEST_TIMEOUT_MS)
-
-  const generationConfig = {
-    temperature: 0.7,
-    responseMimeType: 'application/json',
-    ...(includeThinkingBudget
-      ? {
-          thinkingConfig: {
-            thinkingBudget: 0,
-          },
-        }
-      : {}),
-  }
 
   try {
     const response = await fetch(endpoint, {
@@ -282,7 +261,10 @@ async function fetchGeminiGenerateContent({
             parts: [{ text: systemPrompt }],
           },
         ],
-        generationConfig,
+        generationConfig: {
+          temperature: 0.7,
+          responseMimeType: 'application/json',
+        },
       }),
     })
 
@@ -315,8 +297,6 @@ async function callGeminiWithFallback({ geminiKey, systemPrompt }) {
   const attemptedModels = []
   const attemptErrors = []
   let lastError = null
-  let saw503 = false
-  let sawNonTransientError = false
 
   for (let i = 0; i < GEMINI_MODELS.length; i++) {
     const model = GEMINI_MODELS[i]
@@ -324,27 +304,10 @@ async function callGeminiWithFallback({ geminiKey, systemPrompt }) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`
 
     try {
-      let data
-      try {
-        data = await fetchGeminiGenerateContent({
-          endpoint,
-          systemPrompt,
-          includeThinkingBudget: true,
-        })
-      } catch (err) {
-        const isThinkingBudgetRejected =
-          err?.status === 400 &&
-          /thinking|thinkingBudget|thinkingConfig/i.test(err.rawMessage || err.message || '')
-        if (isThinkingBudgetRejected) {
-          data = await fetchGeminiGenerateContent({
-            endpoint,
-            systemPrompt,
-            includeThinkingBudget: false,
-          })
-        } else {
-          throw err
-        }
-      }
+      const data = await fetchGeminiGenerateContent({
+        endpoint,
+        systemPrompt,
+      })
 
       const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text
       const parsed = safeParseGeminiJson(rawText)
@@ -365,14 +328,8 @@ async function callGeminiWithFallback({ geminiKey, systemPrompt }) {
       attemptErrors.push(describeAttemptError(model, err))
 
       const is503 = is503HighDemandError(err)
-      if (is503) {
-        saw503 = true
-      } else if (err?.status && ![404, 429, 500, 502, 504].includes(err.status)) {
-        sawNonTransientError = true
-      }
-
       const hasMoreModels = i < GEMINI_MODELS.length - 1
-      if (hasMoreModels && err.retryable) {
+      if (hasMoreModels) {
         if (is503) {
           await sleep(GEMINI_503_RETRY_DELAY_MS)
         }
@@ -383,7 +340,6 @@ async function callGeminiWithFallback({ geminiKey, systemPrompt }) {
       detailedError.attemptedModels = attemptedModels
       detailedError.attemptErrors = attemptErrors
       detailedError.status = err.status
-      detailedError.allGemini503 = saw503 && !sawNonTransientError
       throw detailedError
     }
   }
@@ -395,7 +351,6 @@ async function callGeminiWithFallback({ geminiKey, systemPrompt }) {
   )
   fallbackErr.attemptedModels = attemptedModels
   fallbackErr.attemptErrors = attemptErrors
-  fallbackErr.allGemini503 = saw503 && !sawNonTransientError
   throw fallbackErr
 }
 
@@ -407,9 +362,6 @@ export async function runPlanAndDraftAgent({
   onProgress,
 }) {
   const geminiKey = import.meta.env.VITE_GEMINI_API_KEY
-  if (!geminiKey) {
-    throw new Error('Missing VITE_GEMINI_API_KEY in .env configuration.')
-  }
 
   const senderEmail = user.email
   const senderName = deriveSenderName(user)
@@ -521,6 +473,10 @@ Return strictly valid JSON with this exact schema:
   let geminiResult
   let draftEngine = 'gemini'
   try {
+    if (!geminiKey) {
+      throw new Error('VITE_GEMINI_API_KEY is not configured; using Smart Fallback Draft Engine.')
+    }
+
     const {
       result,
       modelUsed,
@@ -573,77 +529,51 @@ Return strictly valid JSON with this exact schema:
   } catch (err) {
     const t2Duration = Math.max(1, Math.round(performance.now() - t2Start))
 
-    if (err.allGemini503) {
-      geminiResult = buildFallbackDraftPlan({
-        senderName,
-        senderEmail,
-        recipientEmail: cleanRecipient,
-        goal: cleanGoal,
+    geminiResult = buildFallbackDraftPlan({
+      senderName,
+      senderEmail,
+      recipientEmail: cleanRecipient,
+      goal: cleanGoal,
+      tone,
+      riskResult,
+    })
+    draftEngine = 'Smart Fallback Draft Engine'
+
+    plan = geminiResult.plan.map((item, idx) => ({
+      step: item.step || idx + 1,
+      title: item.title,
+      description: item.description,
+      status: idx < 2 ? 'done' : 'pending',
+    }))
+
+    trace.push({
+      id: `trace-${Date.now()}-2`,
+      step: 2,
+      tool: 'gemini_generate_plan_and_draft',
+      status: 'success',
+      durationMs: t2Duration,
+      timestamp: new Date().toISOString(),
+      inputs: {
+        model: GEMINI_MODELS[0],
+        fallbackModels: GEMINI_MODELS.slice(1),
+        timeoutMs: GEMINI_REQUEST_TIMEOUT_MS,
+        retry503DelayMs: GEMINI_503_RETRY_DELAY_MS,
         tone,
-        riskResult,
-      })
-      draftEngine = 'Fallback Draft Engine (Gemini 503)'
-
-      plan = geminiResult.plan.map((item, idx) => ({
-        step: item.step || idx + 1,
-        title: item.title,
-        description: item.description,
-        status: idx < 2 ? 'done' : 'pending',
-      }))
-
-      trace.push({
-        id: `trace-${Date.now()}-2`,
-        step: 2,
-        tool: 'gemini_generate_plan_and_draft',
-        status: 'success',
-        durationMs: t2Duration,
-        timestamp: new Date().toISOString(),
-        inputs: {
-          model: GEMINI_MODELS[0],
-          fallbackModels: GEMINI_MODELS.slice(1),
-          timeoutMs: GEMINI_REQUEST_TIMEOUT_MS,
-          retry503DelayMs: GEMINI_503_RETRY_DELAY_MS,
-          tone,
-          riskLevel: riskResult.riskLevel,
-          goal: cleanGoal,
-        },
-        outputs: {
-          engine: 'Fallback Draft Engine (Gemini 503)',
-          note: 'Fallback Draft Engine (Gemini 503)',
-          fallbackUsed: true,
-          attemptedModels: err.attemptedModels || GEMINI_MODELS,
-          attemptErrors: err.attemptErrors || [err.message],
-          subject: geminiResult.subject,
-          bodyLength: geminiResult.body.length,
-          planStepsGenerated: plan.length,
-        },
-      })
-      emit('running')
-    } else {
-      plan[1] = { ...plan[1], status: 'failed' }
-      trace.push({
-        id: `trace-${Date.now()}-2`,
-        step: 2,
-        tool: 'gemini_generate_plan_and_draft',
-        status: 'error',
-        durationMs: t2Duration,
-        timestamp: new Date().toISOString(),
-        inputs: {
-          model: GEMINI_MODELS[0],
-          fallbackModels: GEMINI_MODELS.slice(1),
-          timeoutMs: GEMINI_REQUEST_TIMEOUT_MS,
-          tone,
-          goal: cleanGoal,
-        },
-        outputs: {
-          error: err.message,
-          attemptedModels: err.attemptedModels || [GEMINI_MODELS[0]],
-          attemptErrors: err.attemptErrors || [err.message],
-        },
-      })
-      emit('failed')
-      throw err
-    }
+        riskLevel: riskResult.riskLevel,
+        goal: cleanGoal,
+      },
+      outputs: {
+        engine: 'Smart Fallback Draft Engine',
+        note: 'Gemini API unavailable; automatically generated draft with Smart Fallback Draft Engine.',
+        fallbackUsed: true,
+        attemptedModels: err.attemptedModels || GEMINI_MODELS,
+        attemptErrors: err.attemptErrors || [err.message],
+        subject: geminiResult.subject,
+        bodyLength: geminiResult.body.length,
+        planStepsGenerated: plan.length,
+      },
+    })
+    emit('running')
   }
 
   // STEP 3: Persist agent_run to Supabase and pause for HITL approval

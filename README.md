@@ -1,15 +1,14 @@
 # MailPilot — Autonomous AI Email Outreach Agent
 
-MailPilot is a Human-in-the-Loop (HITL) AI Email Outreach Agent built with **React**, **Vite**, **Tailwind CSS**, **Supabase Auth & Postgres**, **Google Gemini 3.8 Flash**, and **Brevo SMTP API**.
+MailPilot is a Human-in-the-Loop (HITL) AI Email Outreach Agent built with **React**, **Vite**, **Tailwind CSS**, **Supabase Auth & Postgres**, **Google Gemini (`gemini-2.5-flash` / `gemini-2.0-flash`)**, and **Brevo SMTP API**.
 
 ## Features
 
-- **Dual Supabase Authentication**:
+- **Supabase Authentication**:
   - Email + Password (Sign In / Sign Up)
-  - Passwordless 6-Digit Email OTP (`signInWithOtp` + `verifyOtp`)
 - **Autonomous Planning & Risk Classification**:
   - Validates target email and classifies risk (`HIGH` for external recipients, `MEDIUM` for self-test).
-  - Generates a live 5-step execution plan and tailored draft via Gemini 3.8 Flash.
+  - Generates a live 5-step execution plan and tailored draft via `gemini-2.5-flash` (with `gemini-2.0-flash` backup and a client-side Smart Fallback Draft Engine).
   - Persists run state in `agent_runs` and pauses at the Human-in-the-Loop approval gate.
 - **Human-in-the-Loop Approval Gate & Tool Trace**:
   - Edit Recipient, Subject, and Email Body before sending.
@@ -35,7 +34,7 @@ npm run dev
 MailPilot includes a standalone Express + CORS Node.js backend in `server/index.js`:
 
 - `GET /health` — Health & configuration check
-- `POST /api/draft` — Validates recipient, classifies risk, generates a 5-step plan + email draft via Gemini (with automatic fallback draft engine on persistent HTTP 503)
+- `POST /api/draft` — Validates recipient, classifies risk, generates a 5-step plan + email draft via Gemini (with automatic Smart Fallback Draft Engine if Gemini is unavailable)
 - `POST /api/send` — Dispatches approved emails via Brevo SMTP REST API
 
 Run locally:

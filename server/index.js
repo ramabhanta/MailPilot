@@ -14,12 +14,7 @@ dotenv.config({ path: path.join(__dirname, '..', '.env') })
 const PORT = Number(process.env.PORT) || 8787
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*'
 
-const GEMINI_MODELS = [
-  'gemini-flash-latest',
-  'gemini-flash-lite-latest',
-  'gemini-3.8-flash',
-  'gemini-3.8-pro',
-]
+const GEMINI_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash']
 const GEMINI_REQUEST_TIMEOUT_MS = 60000
 const GEMINI_503_RETRY_DELAY_MS = 1500
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
@@ -205,23 +200,13 @@ function buildFallbackDraftPlan({
   }
 }
 
-async function fetchGeminiGenerateContent({
-  endpoint,
-  systemPrompt,
-  includeThinkingBudget = true,
-}) {
+async function fetchGeminiGenerateContent({ endpoint, systemPrompt }) {
   const controller = new AbortController()
   let timedOut = false
   const timeoutId = setTimeout(() => {
     timedOut = true
     controller.abort()
   }, GEMINI_REQUEST_TIMEOUT_MS)
-
-  const generationConfig = {
-    temperature: 0.7,
-    responseMimeType: 'application/json',
-    ...(includeThinkingBudget ? { thinkingConfig: { thinkingBudget: 0 } } : {}),
-  }
 
   try {
     const response = await fetch(endpoint, {
@@ -230,7 +215,10 @@ async function fetchGeminiGenerateContent({
       signal: controller.signal,
       body: JSON.stringify({
         contents: [{ role: 'user', parts: [{ text: systemPrompt }] }],
-        generationConfig,
+        generationConfig: {
+          temperature: 0.7,
+          responseMimeType: 'application/json',
+        },
       }),
     })
 
@@ -263,8 +251,6 @@ async function callGeminiWithFallback({ geminiKey, systemPrompt }) {
   const attemptedModels = []
   const attemptErrors = []
   let lastError = null
-  let saw503 = false
-  let sawNonTransientError = false
 
   for (let i = 0; i < GEMINI_MODELS.length; i++) {
     const model = GEMINI_MODELS[i]
@@ -272,27 +258,10 @@ async function callGeminiWithFallback({ geminiKey, systemPrompt }) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`
 
     try {
-      let data
-      try {
-        data = await fetchGeminiGenerateContent({
-          endpoint,
-          systemPrompt,
-          includeThinkingBudget: true,
-        })
-      } catch (err) {
-        const isThinkingBudgetRejected =
-          err?.status === 400 &&
-          /thinking|thinkingBudget|thinkingConfig/i.test(err.rawMessage || err.message || '')
-        if (isThinkingBudgetRejected) {
-          data = await fetchGeminiGenerateContent({
-            endpoint,
-            systemPrompt,
-            includeThinkingBudget: false,
-          })
-        } else {
-          throw err
-        }
-      }
+      const data = await fetchGeminiGenerateContent({
+        endpoint,
+        systemPrompt,
+      })
 
       const rawText = data?.candidates?.[0]?.content?.parts?.[0]?.text
       const parsed = safeParseGeminiJson(rawText)
@@ -313,14 +282,8 @@ async function callGeminiWithFallback({ geminiKey, systemPrompt }) {
       attemptErrors.push(describeAttemptError(model, err))
 
       const is503 = is503HighDemandError(err)
-      if (is503) {
-        saw503 = true
-      } else if (err?.status && ![404, 429, 500, 502, 504].includes(err.status)) {
-        sawNonTransientError = true
-      }
-
       const hasMoreModels = i < GEMINI_MODELS.length - 1
-      if (hasMoreModels && err.retryable) {
+      if (hasMoreModels) {
         if (is503) {
           await sleep(GEMINI_503_RETRY_DELAY_MS)
         }
@@ -333,7 +296,6 @@ async function callGeminiWithFallback({ geminiKey, systemPrompt }) {
       detailedError.attemptedModels = attemptedModels
       detailedError.attemptErrors = attemptErrors
       detailedError.status = err.status
-      detailedError.allGemini503 = saw503 && !sawNonTransientError
       throw detailedError
     }
   }
@@ -345,7 +307,6 @@ async function callGeminiWithFallback({ geminiKey, systemPrompt }) {
   )
   fallbackErr.attemptedModels = attemptedModels
   fallbackErr.attemptErrors = attemptErrors
-  fallbackErr.allGemini503 = saw503 && !sawNonTransientError
   throw fallbackErr
 }
 
@@ -530,62 +491,54 @@ Return strictly valid JSON with this exact schema:
   } catch (err) {
     const durationMs = Math.max(1, Date.now() - t2Start)
 
-    if (err.allGemini503) {
-      const fallback = buildFallbackDraftPlan({
-        senderName: cleanSenderName,
-        senderEmail: cleanSenderEmail,
-        recipientEmail: cleanRecipient,
-        goal: cleanGoal,
+    const fallback = buildFallbackDraftPlan({
+      senderName: cleanSenderName,
+      senderEmail: cleanSenderEmail,
+      recipientEmail: cleanRecipient,
+      goal: cleanGoal,
+      tone,
+      riskResult,
+    })
+
+    trace.push({
+      id: `trace-${Date.now()}-2`,
+      step: 2,
+      tool: 'gemini_generate_plan_and_draft',
+      status: 'success',
+      durationMs,
+      timestamp: new Date().toISOString(),
+      inputs: {
+        model: GEMINI_MODELS[0],
+        fallbackModels: GEMINI_MODELS.slice(1),
         tone,
-        riskResult,
-      })
+        riskLevel: riskResult.riskLevel,
+      },
+      outputs: {
+        engine: 'Smart Fallback Draft Engine',
+        note: 'Gemini API unavailable; automatically generated draft with Smart Fallback Draft Engine.',
+        fallbackUsed: true,
+        attemptedModels: err.attemptedModels || GEMINI_MODELS,
+        attemptErrors: err.attemptErrors || [err.message],
+        subject: fallback.subject,
+        bodyLength: fallback.body.length,
+      },
+    })
 
-      trace.push({
-        id: `trace-${Date.now()}-2`,
-        step: 2,
-        tool: 'gemini_generate_plan_and_draft',
-        status: 'success',
-        durationMs,
-        timestamp: new Date().toISOString(),
-        inputs: {
-          model: GEMINI_MODELS[0],
-          fallbackModels: GEMINI_MODELS.slice(1),
-          tone,
-          riskLevel: riskResult.riskLevel,
-        },
-        outputs: {
-          engine: 'Fallback Draft Engine (Gemini 503)',
-          note: 'Fallback Draft Engine (Gemini 503)',
-          fallbackUsed: true,
-          attemptedModels: err.attemptedModels || GEMINI_MODELS,
-          attemptErrors: err.attemptErrors || [err.message],
-          subject: fallback.subject,
-          bodyLength: fallback.body.length,
-        },
-      })
-
-      return res.status(200).json({
-        status: 'awaiting_approval',
+    return res.status(200).json({
+      status: 'awaiting_approval',
+      riskLevel: riskResult.riskLevel,
+      riskReason: riskResult.reason,
+      plan: fallback.plan,
+      draft: {
+        recipientEmail: cleanRecipient,
+        subject: fallback.subject,
+        body: fallback.body,
+        tone,
         riskLevel: riskResult.riskLevel,
         riskReason: riskResult.reason,
-        plan: fallback.plan,
-        draft: {
-          recipientEmail: cleanRecipient,
-          subject: fallback.subject,
-          body: fallback.body,
-          tone,
-          riskLevel: riskResult.riskLevel,
-          riskReason: riskResult.reason,
-          draftEngine: 'Fallback Draft Engine (Gemini 503)',
-        },
-        trace,
-      })
-    }
-
-    return res.status(err.status && err.status >= 400 ? err.status : 502).json({
-      error: err.message || 'Gemini draft generation failed.',
-      attemptedModels: err.attemptedModels || GEMINI_MODELS,
-      attemptErrors: err.attemptErrors || [],
+        draftEngine: 'Smart Fallback Draft Engine',
+      },
+      trace,
     })
   }
 })
